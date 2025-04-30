@@ -2,6 +2,7 @@ library bpe;
 
 import 'package:bpe/tiktoken/tiktoken_tokenizer_gpt4o_o1.dart' as t1;
 import 'package:characters/characters.dart';
+import 'package:toxic/toxic.dart';
 
 void main() async {
   String example =
@@ -154,46 +155,6 @@ extension XStreamStr on Stream<String> {
 
   Stream<String> accumulate({int size = 8192}) =>
       accumulateBy(size, (s) => s.length).map((i) => i.join());
-}
-
-extension XStreamAcc<T> on Stream<T> {
-  Stream<List<T>> accumulateBy(
-    int limit,
-    int Function(T) weigher, {
-    int? maxAmount,
-  }) async* {
-    List<T> buffer = [];
-    int size = 0;
-
-    await for (T chunk in this) {
-      if (maxAmount != null && buffer.length >= maxAmount) {
-        yield buffer;
-        buffer = [];
-        size = 0;
-      }
-
-      int weight = weigher(chunk);
-
-      if (size + weight > limit) {
-        if (buffer.isNotEmpty) {
-          yield buffer;
-          buffer = [];
-          size = 0;
-        } else {
-          yield [chunk];
-          buffer = [];
-          size = 0;
-        }
-      }
-
-      buffer.add(chunk);
-      size += weight;
-    }
-
-    if (buffer.isNotEmpty) {
-      yield buffer;
-    }
-  }
 }
 
 extension XStringChunker on String {
