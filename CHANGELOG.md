@@ -1,3 +1,6 @@
+# 1.0.3
+* Fixes & Tests & Readme
+
 # 1.0.2
 * Fixes
 

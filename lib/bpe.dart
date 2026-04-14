@@ -1,18 +1,6 @@
-library bpe;
-
 import 'package:bpe/tiktoken/tiktoken_tokenizer_gpt4o_o1.dart' as t1;
 import 'package:characters/characters.dart';
 import 'package:toxic/toxic.dart';
-
-void main() async {
-  String example =
-      """Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of Letraset sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.""" *
-      100;
-
-  print("CHAR is ${example.length}");
-  print("Real is ${CL100kBaseBPETokenizer().encode(example).length}");
-  print("ESTI is ${await CL100kBaseBPETokenizer().estimateTokens(example)}");
-}
 
 abstract class BPETokenizer {
   const BPETokenizer();
@@ -31,55 +19,41 @@ abstract class BPETokenizer {
 
   Stream<int> encodeStreamTest(
     Stream<String> source, {
-    int chunkSize = 16384, // how many chars we read each time (approx)
-    int overlapSize = 200, // how many chars to keep from the end of combined
+    int chunkSize = 16384,
+    int overlapSize = 200,
   }) async* {
-    final buffer = StringBuffer(); // accumulates partial chunk data
-    String leftover = ''; // leftover from last iteration
+    StringBuffer buffer = StringBuffer();
+    String leftover = '';
 
     await for (String chunk in source) {
-      // Add new chunk to leftover
       buffer.clear();
       buffer.write(leftover);
       buffer.write(chunk);
 
-      final combinedText = buffer.toString();
-
-      // Tokenize the entire combined text
-      final allTokens = encode(combinedText);
-
-      // Decide how many raw characters from the tail of combinedText
-      // we want to keep as "overlap" for the next chunk
-      final overlapStart =
-          (combinedText.length > overlapSize)
-              ? (combinedText.length - overlapSize)
+      String combinedText = buffer.toString();
+      List<int> allTokens = encode(combinedText);
+      int overlapStart =
+          combinedText.length > overlapSize
+              ? combinedText.length - overlapSize
               : 0;
-      final overlapText = combinedText.substring(overlapStart);
+      String overlapText = combinedText.substring(overlapStart);
+      List<int> overlapTokens = encode(overlapText);
+      int overlapTokenCount = overlapTokens.length;
+      int finalTokenCount = allTokens.length - overlapTokenCount;
 
-      // We want to figure out how many tokens that substring (overlapText)
-      // corresponds to, so we re-tokenize just the overlapText:
-      final overlapTokens = encode(overlapText);
-      final overlapTokenCount = overlapTokens.length;
-
-      // So everything in allTokens before that overlap region is "final"
-      final finalTokenCount = allTokens.length - overlapTokenCount;
       if (finalTokenCount > 0) {
-        // Yield out the "final" tokens
-        for (int i = 0; i < finalTokenCount; i++) {
-          yield allTokens[i];
+        for (int index = 0; index < finalTokenCount; index++) {
+          yield allTokens[index];
         }
       }
 
-      // Save leftover = overlapText for next iteration
       leftover = overlapText;
     }
 
-    // After the stream completes, we still may have leftover unfinalized text.
-    // We tokenize leftover alone and yield those tokens.
     if (leftover.isNotEmpty) {
-      final leftoverTokens = encode(leftover);
-      for (final t in leftoverTokens) {
-        yield t;
+      List<int> leftoverTokens = encode(leftover);
+      for (int token in leftoverTokens) {
+        yield token;
       }
     }
   }
@@ -110,45 +84,47 @@ class O200kBaseBPETokenizer extends BPETokenizer {
       t1.Tiktoken.getEncoder(t1.TiktokenEncodingType.o200k_base).encode(text);
 }
 
+const List<String> defaultChunkingSplitPriority = ["\n", ".", ",", " "];
+
 extension XStreamStr on Stream<String> {
   Stream<String> cleanChunks({
     int size = 300,
     int grace = 300,
-    List<String> splitPriority = const ["\n", " ", "."],
+    List<String> splitPriority = defaultChunkingSplitPriority,
   }) => accumulateClean(splitPriority: splitPriority)
       .accumulate(size: (size + grace) * 2)
       .chunk(size: size, grace: grace, splitPriority: splitPriority);
 
   Stream<String> accumulateClean({
-    List<String> splitPriority = const ["\n", " ", "."],
+    List<String> splitPriority = defaultChunkingSplitPriority,
   }) async* {
-    List<String> c = [];
+    List<String> pendingChunks = [];
+
     await for (String chunk in expand((i) => i.characters)) {
-      c = c.isEmpty ? [chunk] : [c[0] + chunk];
+      pendingChunks =
+          pendingChunks.isEmpty ? [chunk] : [pendingChunks[0] + chunk];
 
-      int a = 0;
-      while (c.length < 2 && a < splitPriority.length) {
-        c = c[0].chop(splitPriority[a]).toList();
-        a++;
+      int priorityIndex = 0;
+      while (pendingChunks.length < 2 && priorityIndex < splitPriority.length) {
+        pendingChunks =
+            pendingChunks[0].chop(splitPriority[priorityIndex]).toList();
+        priorityIndex++;
       }
 
-      if (c.length > 1) {
-        yield c.sublist(0, c.length - 1).join();
-        c = c.sublist(c.length - 1);
-      }
-    }
-
-    if (c.isNotEmpty) {
-      if (c.join().isNotEmpty) {
-        yield c.join();
+      if (pendingChunks.length > 1) {
+        yield pendingChunks.sublist(0, pendingChunks.length - 1).join();
+        pendingChunks = pendingChunks.sublist(pendingChunks.length - 1);
       }
     }
+
+    String remainingText = pendingChunks.join();
+    if (remainingText.isNotEmpty) yield remainingText;
   }
 
   Stream<String> chunk({
     int size = 300,
     int grace = 300,
-    List<String> splitPriority = const ["\n", " ", "."],
+    List<String> splitPriority = defaultChunkingSplitPriority,
   }) => asyncExpand(
     (i) => i.chunk(size: size, grace: grace, splitPriority: splitPriority),
   );
@@ -161,74 +137,55 @@ extension XStringChunker on String {
   Stream<String> chunk({
     int size = 300,
     int grace = 300,
-    List<String> splitPriority = const ["\n", " ", "."],
-  }) async* {
-    StringBuffer buffer = StringBuffer();
-
-    for (int i = 0; i < length; i++) {
-      String char = this[i];
-      bool cut = false;
-
-      if (buffer.length >= size) {
-        for (int j = 0; j < splitPriority.length; j++) {
-          if (char == splitPriority[j] && buffer.length > size + (grace * j)) {
-            cut = true;
-            break;
-          }
-        }
-
-        if (!cut && buffer.length > size + (grace * splitPriority.length)) {
-          cut = true;
-        }
-
-        if (cut) {
-          buffer.write(char);
-          yield buffer.toString();
-          buffer.clear();
-          continue;
-        }
-      }
-
-      buffer.write(char);
-    }
-
-    if (buffer.isNotEmpty) {
-      yield buffer.toString();
-    }
-  }
+    List<String> splitPriority = defaultChunkingSplitPriority,
+  }) =>
+      _chunkByPriority(size: size, grace: grace, splitPriority: splitPriority);
 
   Stream<String> accumulate({
     int size = 300,
     int grace = 300,
-    List<String> splitPriority = const ["\n", " ", "."],
+    List<String> splitPriority = defaultChunkingSplitPriority,
+  }) =>
+      _chunkByPriority(size: size, grace: grace, splitPriority: splitPriority);
+
+  Stream<String> _chunkByPriority({
+    required int size,
+    required int grace,
+    required List<String> splitPriority,
   }) async* {
     StringBuffer buffer = StringBuffer();
 
-    for (int i = 0; i < length; i++) {
-      String char = this[i];
-      bool cut = false;
+    for (int index = 0; index < length; index++) {
+      String character = this[index];
+      bool shouldCut = false;
 
       if (buffer.length >= size) {
-        for (int j = 0; j < splitPriority.length; j++) {
-          if (char == splitPriority[j] && buffer.length > size + (grace * j)) {
-            cut = true;
+        for (
+          int priorityIndex = 0;
+          priorityIndex < splitPriority.length;
+          priorityIndex++
+        ) {
+          if (character == splitPriority[priorityIndex] &&
+              buffer.length > size + (grace * priorityIndex)) {
+            shouldCut = true;
             break;
           }
         }
 
-        if (!cut && buffer.length > size + (grace * splitPriority.length)) {
-          cut = true;
+        if (!shouldCut &&
+            buffer.length > size + (grace * splitPriority.length)) {
+          shouldCut = true;
         }
 
-        if (cut) {
-          buffer.write(char);
+        if (shouldCut) {
+          buffer.write(character);
           yield buffer.toString();
           buffer.clear();
           continue;
         }
       }
 
-      buffer.write(char);
+      buffer.write(character);
     }
 
     if (buffer.isNotEmpty) {
@@ -244,11 +201,11 @@ extension XStringChunker on String {
 
     List<String> parts = split(by);
 
-    for (int i = 0; i < parts.length; i++) {
-      if (i < parts.length - 1) {
-        yield "${parts[i]}$by";
+    for (int index = 0; index < parts.length; index++) {
+      if (index < parts.length - 1) {
+        yield "${parts[index]}$by";
       } else {
-        yield parts[i];
+        yield parts[index];
       }
     }
   }

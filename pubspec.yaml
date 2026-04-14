@@ -1,6 +1,6 @@
 name: bpe
 description: Fast tokenizer for CL100kBase and O2O100kBase. Streaming count estimators 
-version: 1.0.2
+version: 1.0.3
 repository: https://github.com/ArcaneArts/bpe
 environment:
   sdk: ^3.7.0
